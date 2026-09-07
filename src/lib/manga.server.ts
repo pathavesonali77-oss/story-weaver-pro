@@ -284,11 +284,13 @@ function numberScript(all: Segment[]): string {
  * Writes image prompts for lines `from`..`to` (1-based, inclusive) while the
  * model reads the ENTIRE script.
  *
- * There is no chunk system any more: the model gets the full script and the full
- * character bible on every call, so continuity comes from the model actually
- * seeing the whole story rather than from stitched-together chunk briefs. A
- * pass only limits how many prompts are ASKED FOR at once, because the answer
- * (not the input) is what has a token ceiling.
+ * NO CHUNKING. MiniMax M3 reads over a million tokens of input, so the whole
+ * numbered script goes in on every call and the requested range comes back in
+ * one answer. Splitting the request into small sub-batches burned the daily
+ * free quota many times faster and, worse, each sub-batch only saw a keyhole of
+ * the story — which is what let panels drift away from the script. One request
+ * per range, the model sees everything, and only genuinely missing lines are
+ * asked for again.
  */
 export async function writePrompts(
   bible: string,
@@ -299,47 +301,32 @@ export async function writePrompts(
   const count = to - from + 1;
   if (count <= 0) return [];
 
-  /**
-   * Lines asked for in ONE request.
-   *
-   * Long scripts used to be handled by pasting the WHOLE script and asking for
-   * hundreds of prompts in a single reply. The model then renumbered, skipped
-   * or truncated its answer, and prompts silently landed on the wrong
-   * timestamps — panels drawn from a completely different part of the story.
-   * Small, explicit requests remove that failure entirely: every request now
-   * prints the exact lines to draw, so the model cannot drift off them.
-   */
-  const SUB = 20;
-  /** Neighbouring lines sent for continuity only — never drawn. */
-  const CONTEXT_BEFORE = 8;
-  const CONTEXT_AFTER = 6;
-
-  const lineOf = (n: number): string => {
-    const s = all[n - 1] as Segment;
-    return `${n}. [${s.start}s-${s.end}s] ${s.text}`;
-  };
+  const script = numberScript(all);
 
   const ask = async (want: number[], temp: number) => {
     const first = want[0] as number;
     const last = want[want.length - 1] as number;
-    const lo = Math.max(1, first - CONTEXT_BEFORE);
-    const hi = Math.min(all.length, last + CONTEXT_AFTER);
-    const context: string[] = [];
-    for (let i = lo; i <= hi; i++) context.push(lineOf(i));
-    const draw = want.map(lineOf).join("\n");
+    const contiguous = want.length === last - first + 1;
+    const listing = want
+      .map((n) => {
+        const s = all[n - 1] as Segment;
+        return `${n}. [${s.start}s-${s.end}s] ${s.text}`;
+      })
+      .join("\n");
 
     return textChat(
       PROMPT_SYSTEM,
       `CHARACTER BIBLE:\n${bible || "(none)"}\n\n` +
-        `STORY CONTEXT (surrounding script lines, for continuity only — never write a prompt for these):\n` +
-        `${context.join("\n")}\n\n` +
+        `FULL NUMBERED SCRIPT (read all of it for continuity):\n${script}\n\n` +
         `LINES TO DRAW — write ONE prompt for EACH of these ${want.length} lines and nothing else. ` +
-        `Each prompt draws ONLY its own line's moment, place and action:\n${draw}\n\n` +
-        `Output exactly ${want.length} lines, each starting with that line's own number ` +
-        `(${want.join(", ")}), then ') ', then the prompt on the same single line. Nothing else.`,
+        `Each prompt draws ONLY its own numbered line's moment, place and action, and must be ` +
+        `recognisable as that line:\n${listing}\n\n` +
+        `Output exactly ${want.length} lines, numbered with each line's OWN number` +
+        `${contiguous ? ` (${first} to ${last})` : ` (${want.join(", ")})`}, then ') ', ` +
+        `then the prompt on that same single line. Nothing else.`,
       {
         temperature: temp,
-        maxOutputTokens: Math.min(120_000, 3_000 + want.length * 340),
+        maxOutputTokens: Math.min(190_000, 4_000 + want.length * 340),
       },
     );
   };
@@ -388,36 +375,21 @@ export async function writePrompts(
     entries.forEach((e, i) => accept(want[i] as number, e.text));
   };
 
-  // Small sequential sub-batches, so one bad reply can only affect its own
-  // handful of lines instead of hundreds.
-  for (let i = 0; i < wanted.length; i += SUB) {
-    const group = wanted.slice(i, i + SUB);
-    try {
-      absorb(await ask(group, 0.7), group);
-    } catch (e) {
-      console.error("writePrompts pass failed:", e instanceof Error ? e.message : e);
-    }
-
-    // Repair pass for whatever this group is still missing.
-    const gap = group.filter((n) => !byNumber.has(n));
-    if (gap.length > 0 && gap.length < group.length) {
-      try {
-        absorb(await ask(gap, 0.5), gap);
-      } catch (e) {
-        console.error("writePrompts repair failed:", e instanceof Error ? e.message : e);
-      }
-    }
+  // ONE request for the whole range.
+  try {
+    absorb(await ask(wanted, 0.7), wanted);
+  } catch (e) {
+    console.error("writePrompts pass failed:", e instanceof Error ? e.message : e);
   }
 
-  // Last repair: one line at a time, so numbering can no longer be confused.
-  for (const n of wanted.filter((k) => !byNumber.has(k))) {
+  // Repair only what is genuinely missing (a truncated answer), in as few
+  // extra requests as possible: one request for all the gaps together.
+  const gap = wanted.filter((n) => !byNumber.has(n));
+  if (gap.length > 0 && gap.length < wanted.length) {
     try {
-      absorb(await ask([n], 0.4), [n]);
+      absorb(await ask(gap, 0.5), gap);
     } catch (e) {
-      console.error(
-        `writePrompts single-line repair failed for ${n}:`,
-        e instanceof Error ? e.message : e,
-      );
+      console.error("writePrompts repair failed:", e instanceof Error ? e.message : e);
     }
   }
 
