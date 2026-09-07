@@ -853,21 +853,60 @@ export function hasPeople(prompt: string, bible?: string): boolean {
   );
 }
 
+/**
+ * Hard budget for what actually reaches the image model.
+ *
+ * Flux.1 Schnell reads roughly 256 tokens (~1000 characters). Everything past
+ * that is silently thrown away by the encoder — the renderer never sees it.
+ * The old composition opened with the long style block, then the scene, then
+ * the appearance lock and five guard sentences, which ran past 2000
+ * characters. On long scripts (longer prompts, a longer character bible) the
+ * scene itself was pushed over the edge and got cut, so the picture was drawn
+ * from a style block and some guards with barely any story in it — a panel
+ * that looks nothing like its line. Short scripts stayed under the limit,
+ * which is why the fault only showed up on long ones.
+ *
+ * So: the STORY MOMENT goes first and always fits, then a compact style and
+ * the shortest possible guards, and the whole thing is kept inside the budget.
+ */
+const IMAGE_PROMPT_BUDGET = 1000;
+const SCENE_BUDGET = 620;
+const LOCK_BUDGET = 150;
+
+/** Trims to a length without cutting mid-word. */
+function clip(s: string, max: number): string {
+  const t = s.trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max);
+  const stop = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf(", "), cut.lastIndexOf(" "));
+  return cut.slice(0, stop > max * 0.6 ? stop : max).replace(/[\s,.;-]+$/, "");
+}
+
+/** Compact renderer-side art direction (the full STYLE block does not fit). */
+const STYLE_SHORT =
+  "polished 2D Japanese anime frame, crisp ink linework, clean cel shading, painted anime background, vivid colours";
+
 export function composeImagePrompt(prompt: string, bible?: string): string {
   const fixed = enforceGender(sanitizePrompt(prompt), bible);
   const peopled = hasPeople(fixed, bible);
   // Character lock only matters when someone is actually in frame.
-  const lock = peopled ? characterLock(fixed, bible) : "";
-  // This is the only place art style is introduced. It is deliberately first
-  // because Flux weights early tokens most; the exact timestamp scene follows
-  // immediately, before the secondary character continuity details.
-  return (
-    `${STYLE}. THIS EXACT STORY MOMENT: ${fixed}. ` +
-    `${lock ? lock + " " : ""}${TONE_LOCK}. ${NO_TEXT_GUARD}. ` +
-    `${peopled ? `${CAST_GUARD}. ${ANATOMY_GUARD}` : NO_PEOPLE_GUARD}. ${SINGLE_PANEL_GUARD}. ` +
-    `16:9 widescreen cinematic framing.`
-  );
+  const lock = peopled ? clip(characterLock(fixed, bible), LOCK_BUDGET) : "";
+
+  // Scene FIRST: it is the only part that must never be lost to truncation.
+  const parts = [
+    `THIS EXACT STORY MOMENT: ${clip(fixed, SCENE_BUDGET)}`,
+    lock,
+    STYLE_SHORT,
+    peopled
+      ? "only the described people, each drawn once, whole separate bodies"
+      : "empty environment, no people in frame",
+    "natural clear lighting, wordless artwork with no text or signage",
+    "one single 16:9 widescreen illustration of this one moment",
+  ].filter(Boolean);
+
+  return clip(parts.join(". "), IMAGE_PROMPT_BUDGET);
 }
+
 
 /**
  * Blank-panel rejection.
