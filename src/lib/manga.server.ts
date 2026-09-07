@@ -900,7 +900,13 @@ export function composeImagePrompt(prompt: string, bible?: string): string {
     "one single 16:9 widescreen illustration of this one moment",
   ].filter(Boolean);
 
-  return clip(parts.join(". "), IMAGE_PROMPT_BUDGET);
+  return clip(
+    parts
+      .join(". ")
+      .replace(/\.\s*\./g, ".")
+      .replace(/\s{2,}/g, " "),
+    IMAGE_PROMPT_BUDGET,
+  );
 }
 
 /**
