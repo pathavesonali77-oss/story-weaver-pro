@@ -1065,22 +1065,32 @@ export async function renderPanel(
   const errors: string[] = [];
   let tries = 0;
 
-  // TIMESTAMP FIDELITY GATE — runs immediately before the first image request.
-  // The prompt is checked against THIS line's own moment (setting, subject,
-  // action, no blending). A mismatch is rewritten for this exact line and the
-  // rewrite is what gets drawn; the wrong scene never reaches the renderer.
+  // TIMESTAMP FIDELITY GATE — rescue only.
+  //
+  // This used to send EVERY panel's prompt to the text model for approval, and
+  // the model rewrote prompts it had judged "not this moment" while seeing only
+  // one isolated line. On a long script that fired thousands of times, and each
+  // rewrite replaced a correct, whole-script prompt with a scene the checker
+  // invented — which is exactly how finished panels ended up showing something
+  // completely different from the script. It also drained the daily text quota.
+  //
+  // The prompts now come from a model that has read the ENTIRE script, so a
+  // prompt is trusted by default. The checker is called ONLY when a prompt
+  // shares no content word at all with its own English line — a real sign it
+  // was written from somewhere else.
   let prompt = written;
   let rewritten = false;
-  if (line) {
+  if (line && isEnglishish(line) && !mentionsLine(written, line)) {
     const vetted = await verifyPromptForLine(written, line, bible, timestamp);
     prompt = vetted.prompt;
     rewritten = vetted.rewritten;
     if (rewritten) {
       console.warn(
-        `timestamp fidelity: prompt for ${timestamp ? `[${timestamp}] ` : ""}line was written from a different moment — regenerated for this line`,
+        `timestamp fidelity: prompt for ${timestamp ? `[${timestamp}] ` : ""}line matched no word of its own line — regenerated for this line`,
       );
     }
   }
+
 
   // Rounds 0-1: exactly the prompt that was verified for this line.
   for (let round = 0; round < 2; round++) {
