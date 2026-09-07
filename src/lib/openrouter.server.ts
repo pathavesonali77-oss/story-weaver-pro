@@ -184,6 +184,61 @@ async function callOpenRouter(user: string, opts: ChatOptions): Promise<string> 
   throw new Error(`MiniMax M3 request failed: ${lastErr}`);
 }
 
+/**
+ * Decides what to do with the key that just failed.
+ *
+ * "parked"  — the key was put on cooldown (short) or benched for the rest of
+ *             the UTC day (daily quota / dead key) and the pool moved on.
+ * "stop"    — the request itself is wrong; another key cannot help.
+ * "other"   — not a quota problem; the caller applies its own backoff.
+ */
+function park(
+  slot: Slot,
+  total: number,
+  status: number,
+  body: string,
+  retryAfterSec: number,
+): "parked" | "stop" | "other" {
+  const daily =
+    /per\s*day|daily|free-models-per-day|day limit|quota|insufficient|add (more )?credits|requires more credits|out of credits/i.test(
+      body,
+    );
+
+  if (status === 429) {
+    if (daily) {
+      slot.exhaustedUntil = nextDailyReset();
+    } else {
+      slot.shortHits += 1;
+      // Three short rate-limits in a row on one key means the free allowance
+      // for that key is effectively spent: bench it for the day instead of
+      // bouncing back onto it every few seconds.
+      slot.exhaustedUntil =
+        slot.shortHits >= 3
+          ? nextDailyReset()
+          : Date.now() + Math.min(90_000, (retryAfterSec > 0 ? retryAfterSec : 20) * 1000 + 2000);
+    }
+    advanceKey(total);
+    return "parked";
+  }
+
+  if (status === 401 || status === 402 || status === 403) {
+    // Dead / creditless key: bench it for the day and move on.
+    slot.exhaustedUntil = nextDailyReset();
+    advanceKey(total);
+    return "parked";
+  }
+
+  if (daily) {
+    slot.exhaustedUntil = nextDailyReset();
+    advanceKey(total);
+    return "parked";
+  }
+
+  if (status === 400) return "stop";
+  return "other";
+}
+
+
 /** First key that is not parked, starting from the active one. */
 function pickKey(keys: string[]): string | null {
   const now = Date.now();
