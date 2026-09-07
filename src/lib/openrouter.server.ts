@@ -134,35 +134,42 @@ async function callOpenRouter(user: string, opts: ChatOptions): Promise<string> 
         };
         const text = (json.choices?.[0]?.message?.content ?? "").trim();
         if (text) {
+          // A good call resets this key's short-limit streak.
+          slot.shortHits = 0;
           // Stay on this key: the pool only moves on when a key is parked
           // (daily quota, rate limit or a dead key), never after a good call.
           return text;
         }
-        lastErr = json.error?.message ?? "empty completion";
+        // OpenRouter also reports quota problems INSIDE a 200 response body
+        // ({"error":{"code":429,...}}). Treating that as "empty completion"
+        // kept hammering the same exhausted key instead of switching — that is
+        // the auto-switch failure. Classify it exactly like an HTTP error.
+        const inBody = json.error;
+        if (inBody) {
+          lastErr = `${inBody.code ?? "error"} ${inBody.message ?? ""}`.trim();
+          const handled = park(slot, keys.length, inBody.code ?? 0, inBody.message ?? "", 0);
+          if (handled === "stop") break;
+          continue;
+        }
+        lastErr = "empty completion";
+        // Empty answers repeat on the same key — move on rather than loop.
+        advanceKey(keys.length);
         continue;
-
       }
 
       const body = (await res.text().catch(() => "")).slice(0, 600);
       lastErr = `${res.status} ${body}`;
 
-      if (res.status === 429) {
-        if (/per\s*day|daily|free-models-per-day/i.test(body)) {
-          slot.exhaustedUntil = nextDailyReset();
-        } else {
-          const retryAfter = Number(res.headers.get("retry-after") ?? 0);
-          slot.exhaustedUntil =
-            Date.now() + Math.min(90_000, (retryAfter > 0 ? retryAfter : 20) * 1000 + 2000);
-        }
-        advanceKey(keys.length);
-        continue;
-      }
-      if (res.status === 401 || res.status === 403 || res.status === 402) {
-        // Dead / creditless key: park it for the day and move on.
-        slot.exhaustedUntil = nextDailyReset();
-        advanceKey(keys.length);
-        continue;
-      }
+      const handled = park(
+        slot,
+        keys.length,
+        res.status,
+        body,
+        Number(res.headers.get("retry-after") ?? 0),
+      );
+      if (handled === "stop") break;
+      if (handled === "parked") continue;
+
       if (res.status === 400) break; // bad request — retrying cannot help
       // 5xx / provider hiccup: brief backoff, next key.
       advanceKey(keys.length);
