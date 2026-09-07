@@ -37,7 +37,7 @@ let chain: Promise<unknown> = Promise.resolve();
 function slotFor(key: string): Slot {
   let s = slots.get(key);
   if (!s) {
-    s = { exhaustedUntil: 0, lastUsed: 0 };
+    s = { exhaustedUntil: 0, lastUsed: 0, shortHits: 0 };
     slots.set(key, s);
   }
   return s;
