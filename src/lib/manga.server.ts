@@ -265,7 +265,7 @@ const PROMPT_SYSTEM =
   "crowd or force, made of unnamed people who are not the main cast.\n" +
   "- NO TEXT: never describe text, letters, words, numbers, signs, posters, banners, newspapers, book pages, screens " +
   "with writing, labels or logos. Show the OBJECT and the reaction instead, never the writing.\n" +
-  "- 90 to 130 words each — dense with visual detail, no filler. English only.\n" +
+  "- 55 to 80 words each — every word visual and load-bearing, no filler. English only. The image engine only reads a short prompt, so a longer one loses its ending.\n" +
   "OUTPUT FORMAT (strict about the shape, nothing else): one plain line per requested script line, each starting with " +
   "that script line's own number, then ') ', then the whole prompt on that same single line. Example:\n" +
   "37) In the sunlit courtyard, Henan, a male 17-year-old boy ...\n38) Close-up of ...\n" +
@@ -430,7 +430,7 @@ export async function writePrompts(
         await textChat(
           "You turn ONE script line into ONE English image prompt for exactly that moment. " +
             "Translate the line if it is not English. Output only the prompt: one paragraph, " +
-            "90-130 English words, its place, its people, its action, concrete environment details, " +
+            "55-80 English words, its place, its people, its action, concrete environment details, " +
             "camera angle and natural lighting. No text, signs, speech bubbles, numbering or art-style talk.",
           `CHARACTER BIBLE:\n${bible || "(none)"}\n\nSCRIPT LINE ${n} [${seg.start}s-${seg.end}s]:\n${seg.text}`,
           { temperature: 0.4, maxOutputTokens: 700, attempts: 2 },
