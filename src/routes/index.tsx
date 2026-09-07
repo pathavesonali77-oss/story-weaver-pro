@@ -56,7 +56,11 @@ const SAMPLE = `(0:00)Henan की कहानी असुरा का उद
  * engine, so each pass covers 5x as many lines — far fewer requests per script,
  * which is what protects the daily free-model allowance.
  */
-const PROMPT_RANGE = 300;
+// NO CHUNKING. MiniMax M3 reads the whole script (1M+ input context) and can
+// answer for the whole script too, so prompts are written in ONE request for
+// the entire story. Splitting it into passes multiplied the daily quota use and
+// gave each pass only a keyhole of the story.
+const PROMPT_RANGE = 1_000_000;
 
 /**
  * Parallel image request lanes. Each lane sends IMAGE_BATCH prompts in one

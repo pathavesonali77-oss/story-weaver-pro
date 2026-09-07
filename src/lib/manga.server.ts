@@ -324,7 +324,7 @@ export async function writePrompts(
         `then the prompt on that same single line. Nothing else.`,
       {
         temperature: temp,
-        maxOutputTokens: Math.min(190_000, 4_000 + want.length * 340),
+        maxOutputTokens: Math.min(200_000, 4_000 + want.length * 190),
       },
     );
   };
