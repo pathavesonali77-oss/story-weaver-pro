@@ -3,7 +3,6 @@ import { pixazoKeys, pickKey } from "./keys.server";
 import { textChat } from "./text-engine.server";
 import { verifyPromptForLine } from "./scene-check.server";
 
-
 const PIXAZO_URL = "https://gateway.pixazo.ai/flux-1-schnell/v1/getData";
 
 /**
@@ -62,7 +61,6 @@ export const ANATOMY_GUARD =
  * used anywhere in this app.
  */
 export { textChat };
-
 
 function stripFences(s: string): string {
   return s
@@ -265,7 +263,7 @@ const PROMPT_SYSTEM =
   "crowd or force, made of unnamed people who are not the main cast.\n" +
   "- NO TEXT: never describe text, letters, words, numbers, signs, posters, banners, newspapers, book pages, screens " +
   "with writing, labels or logos. Show the OBJECT and the reaction instead, never the writing.\n" +
-  "- 90 to 130 words each — dense with visual detail, no filler. English only.\n" +
+  "- 55 to 80 words each — every word visual and load-bearing, no filler. English only. The image engine only reads a short prompt, so a longer one loses its ending.\n" +
   "OUTPUT FORMAT (strict about the shape, nothing else): one plain line per requested script line, each starting with " +
   "that script line's own number, then ') ', then the whole prompt on that same single line. Example:\n" +
   "37) In the sunlit courtyard, Henan, a male 17-year-old boy ...\n38) Close-up of ...\n" +
@@ -284,11 +282,13 @@ function numberScript(all: Segment[]): string {
  * Writes image prompts for lines `from`..`to` (1-based, inclusive) while the
  * model reads the ENTIRE script.
  *
- * There is no chunk system any more: the model gets the full script and the full
- * character bible on every call, so continuity comes from the model actually
- * seeing the whole story rather than from stitched-together chunk briefs. A
- * pass only limits how many prompts are ASKED FOR at once, because the answer
- * (not the input) is what has a token ceiling.
+ * NO CHUNKING. MiniMax M3 reads over a million tokens of input, so the whole
+ * numbered script goes in on every call and the requested range comes back in
+ * one answer. Splitting the request into small sub-batches burned the daily
+ * free quota many times faster and, worse, each sub-batch only saw a keyhole of
+ * the story — which is what let panels drift away from the script. One request
+ * per range, the model sees everything, and only genuinely missing lines are
+ * asked for again.
  */
 export async function writePrompts(
   bible: string,
@@ -299,47 +299,32 @@ export async function writePrompts(
   const count = to - from + 1;
   if (count <= 0) return [];
 
-  /**
-   * Lines asked for in ONE request.
-   *
-   * Long scripts used to be handled by pasting the WHOLE script and asking for
-   * hundreds of prompts in a single reply. The model then renumbered, skipped
-   * or truncated its answer, and prompts silently landed on the wrong
-   * timestamps — panels drawn from a completely different part of the story.
-   * Small, explicit requests remove that failure entirely: every request now
-   * prints the exact lines to draw, so the model cannot drift off them.
-   */
-  const SUB = 20;
-  /** Neighbouring lines sent for continuity only — never drawn. */
-  const CONTEXT_BEFORE = 8;
-  const CONTEXT_AFTER = 6;
-
-  const lineOf = (n: number): string => {
-    const s = all[n - 1] as Segment;
-    return `${n}. [${s.start}s-${s.end}s] ${s.text}`;
-  };
+  const script = numberScript(all);
 
   const ask = async (want: number[], temp: number) => {
     const first = want[0] as number;
     const last = want[want.length - 1] as number;
-    const lo = Math.max(1, first - CONTEXT_BEFORE);
-    const hi = Math.min(all.length, last + CONTEXT_AFTER);
-    const context: string[] = [];
-    for (let i = lo; i <= hi; i++) context.push(lineOf(i));
-    const draw = want.map(lineOf).join("\n");
+    const contiguous = want.length === last - first + 1;
+    const listing = want
+      .map((n) => {
+        const s = all[n - 1] as Segment;
+        return `${n}. [${s.start}s-${s.end}s] ${s.text}`;
+      })
+      .join("\n");
 
     return textChat(
       PROMPT_SYSTEM,
       `CHARACTER BIBLE:\n${bible || "(none)"}\n\n` +
-        `STORY CONTEXT (surrounding script lines, for continuity only — never write a prompt for these):\n` +
-        `${context.join("\n")}\n\n` +
+        `FULL NUMBERED SCRIPT (read all of it for continuity):\n${script}\n\n` +
         `LINES TO DRAW — write ONE prompt for EACH of these ${want.length} lines and nothing else. ` +
-        `Each prompt draws ONLY its own line's moment, place and action:\n${draw}\n\n` +
-        `Output exactly ${want.length} lines, each starting with that line's own number ` +
-        `(${want.join(", ")}), then ') ', then the prompt on the same single line. Nothing else.`,
+        `Each prompt draws ONLY its own numbered line's moment, place and action, and must be ` +
+        `recognisable as that line:\n${listing}\n\n` +
+        `Output exactly ${want.length} lines, numbered with each line's OWN number` +
+        `${contiguous ? ` (${first} to ${last})` : ` (${want.join(", ")})`}, then ') ', ` +
+        `then the prompt on that same single line. Nothing else.`,
       {
         temperature: temp,
-        maxOutputTokens: Math.min(120_000, 3_000 + want.length * 340),
+        maxOutputTokens: Math.min(200_000, 4_000 + want.length * 190),
       },
     );
   };
@@ -388,39 +373,23 @@ export async function writePrompts(
     entries.forEach((e, i) => accept(want[i] as number, e.text));
   };
 
-  // Small sequential sub-batches, so one bad reply can only affect its own
-  // handful of lines instead of hundreds.
-  for (let i = 0; i < wanted.length; i += SUB) {
-    const group = wanted.slice(i, i + SUB);
-    try {
-      absorb(await ask(group, 0.7), group);
-    } catch (e) {
-      console.error("writePrompts pass failed:", e instanceof Error ? e.message : e);
-    }
-
-    // Repair pass for whatever this group is still missing.
-    const gap = group.filter((n) => !byNumber.has(n));
-    if (gap.length > 0 && gap.length < group.length) {
-      try {
-        absorb(await ask(gap, 0.5), gap);
-      } catch (e) {
-        console.error("writePrompts repair failed:", e instanceof Error ? e.message : e);
-      }
-    }
+  // ONE request for the whole range.
+  try {
+    absorb(await ask(wanted, 0.7), wanted);
+  } catch (e) {
+    console.error("writePrompts pass failed:", e instanceof Error ? e.message : e);
   }
 
-  // Last repair: one line at a time, so numbering can no longer be confused.
-  for (const n of wanted.filter((k) => !byNumber.has(k))) {
+  // Repair only what is genuinely missing (a truncated answer), in as few
+  // extra requests as possible: one request for all the gaps together.
+  const gap = wanted.filter((n) => !byNumber.has(n));
+  if (gap.length > 0 && gap.length < wanted.length) {
     try {
-      absorb(await ask([n], 0.4), [n]);
+      absorb(await ask(gap, 0.5), gap);
     } catch (e) {
-      console.error(
-        `writePrompts single-line repair failed for ${n}:`,
-        e instanceof Error ? e.message : e,
-      );
+      console.error("writePrompts repair failed:", e instanceof Error ? e.message : e);
     }
   }
-
 
   // Duplicate guard: two timestamps must never share one written prompt, or
   // one line's picture ends up standing in for another moment entirely.
@@ -458,7 +427,7 @@ export async function writePrompts(
         await textChat(
           "You turn ONE script line into ONE English image prompt for exactly that moment. " +
             "Translate the line if it is not English. Output only the prompt: one paragraph, " +
-            "90-130 English words, its place, its people, its action, concrete environment details, " +
+            "55-80 English words, its place, its people, its action, concrete environment details, " +
             "camera angle and natural lighting. No text, signs, speech bubbles, numbering or art-style talk.",
           `CHARACTER BIBLE:\n${bible || "(none)"}\n\nSCRIPT LINE ${n} [${seg.start}s-${seg.end}s]:\n${seg.text}`,
           { temperature: 0.4, maxOutputTokens: 700, attempts: 2 },
@@ -483,7 +452,6 @@ export async function writePrompts(
 
   return chainContinuity(built);
 }
-
 
 /**
  * Panel-to-panel continuity.
@@ -881,19 +849,63 @@ export function hasPeople(prompt: string, bible?: string): boolean {
   );
 }
 
+/**
+ * Hard budget for what actually reaches the image model.
+ *
+ * Flux.1 Schnell reads roughly 256 tokens (~1000 characters). Everything past
+ * that is silently thrown away by the encoder — the renderer never sees it.
+ * The old composition opened with the long style block, then the scene, then
+ * the appearance lock and five guard sentences, which ran past 2000
+ * characters. On long scripts (longer prompts, a longer character bible) the
+ * scene itself was pushed over the edge and got cut, so the picture was drawn
+ * from a style block and some guards with barely any story in it — a panel
+ * that looks nothing like its line. Short scripts stayed under the limit,
+ * which is why the fault only showed up on long ones.
+ *
+ * So: the STORY MOMENT goes first and always fits, then a compact style and
+ * the shortest possible guards, and the whole thing is kept inside the budget.
+ */
+const IMAGE_PROMPT_BUDGET = 1000;
+const SCENE_BUDGET = 620;
+const LOCK_BUDGET = 150;
+
+/** Trims to a length without cutting mid-word. */
+function clip(s: string, max: number): string {
+  const t = s.trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max);
+  const stop = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf(", "), cut.lastIndexOf(" "));
+  return cut.slice(0, stop > max * 0.6 ? stop : max).replace(/[\s,.;-]+$/, "");
+}
+
+/** Compact renderer-side art direction (the full STYLE block does not fit). */
+const STYLE_SHORT =
+  "polished 2D Japanese anime frame, crisp ink linework, clean cel shading, painted anime background, vivid colours";
+
 export function composeImagePrompt(prompt: string, bible?: string): string {
   const fixed = enforceGender(sanitizePrompt(prompt), bible);
   const peopled = hasPeople(fixed, bible);
   // Character lock only matters when someone is actually in frame.
-  const lock = peopled ? characterLock(fixed, bible) : "";
-  // This is the only place art style is introduced. It is deliberately first
-  // because Flux weights early tokens most; the exact timestamp scene follows
-  // immediately, before the secondary character continuity details.
-  return (
-    `${STYLE}. THIS EXACT STORY MOMENT: ${fixed}. ` +
-    `${lock ? lock + " " : ""}${TONE_LOCK}. ${NO_TEXT_GUARD}. ` +
-    `${peopled ? `${CAST_GUARD}. ${ANATOMY_GUARD}` : NO_PEOPLE_GUARD}. ${SINGLE_PANEL_GUARD}. ` +
-    `16:9 widescreen cinematic framing.`
+  const lock = peopled ? clip(characterLock(fixed, bible), LOCK_BUDGET) : "";
+
+  // Scene FIRST: it is the only part that must never be lost to truncation.
+  const parts = [
+    `THIS EXACT STORY MOMENT: ${clip(fixed, SCENE_BUDGET)}`,
+    lock,
+    STYLE_SHORT,
+    peopled
+      ? "only the described people, each drawn once, whole separate bodies"
+      : "empty environment, no people in frame",
+    "natural clear lighting, wordless artwork with no text or signage",
+    "one single 16:9 widescreen illustration of this one moment",
+  ].filter(Boolean);
+
+  return clip(
+    parts
+      .join(". ")
+      .replace(/\.\s*\./g, ".")
+      .replace(/\s{2,}/g, " "),
+    IMAGE_PROMPT_BUDGET,
   );
 }
 
@@ -1093,19 +1105,28 @@ export async function renderPanel(
   const errors: string[] = [];
   let tries = 0;
 
-  // TIMESTAMP FIDELITY GATE — runs immediately before the first image request.
-  // The prompt is checked against THIS line's own moment (setting, subject,
-  // action, no blending). A mismatch is rewritten for this exact line and the
-  // rewrite is what gets drawn; the wrong scene never reaches the renderer.
+  // TIMESTAMP FIDELITY GATE — rescue only.
+  //
+  // This used to send EVERY panel's prompt to the text model for approval, and
+  // the model rewrote prompts it had judged "not this moment" while seeing only
+  // one isolated line. On a long script that fired thousands of times, and each
+  // rewrite replaced a correct, whole-script prompt with a scene the checker
+  // invented — which is exactly how finished panels ended up showing something
+  // completely different from the script. It also drained the daily text quota.
+  //
+  // The prompts now come from a model that has read the ENTIRE script, so a
+  // prompt is trusted by default. The checker is called ONLY when a prompt
+  // shares no content word at all with its own English line — a real sign it
+  // was written from somewhere else.
   let prompt = written;
   let rewritten = false;
-  if (line) {
+  if (line && isEnglishish(line) && !mentionsLine(written, line)) {
     const vetted = await verifyPromptForLine(written, line, bible, timestamp);
     prompt = vetted.prompt;
     rewritten = vetted.rewritten;
     if (rewritten) {
       console.warn(
-        `timestamp fidelity: prompt for ${timestamp ? `[${timestamp}] ` : ""}line was written from a different moment — regenerated for this line`,
+        `timestamp fidelity: prompt for ${timestamp ? `[${timestamp}] ` : ""}line matched no word of its own line — regenerated for this line`,
       );
     }
   }

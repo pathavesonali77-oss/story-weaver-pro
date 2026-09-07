@@ -46,14 +46,7 @@ function slotFor(key: string): Slot {
 /** Next UTC midnight — when OpenRouter resets the free daily allowance. */
 function nextDailyReset(): number {
   const now = new Date();
-  return Date.UTC(
-    now.getUTCFullYear(),
-    now.getUTCMonth(),
-    now.getUTCDate() + 1,
-    0,
-    0,
-    5,
-  );
+  return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 5);
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -237,7 +230,6 @@ function park(
   if (status === 400) return "stop";
   return "other";
 }
-
 
 /** First key that is not parked, starting from the active one. */
 function pickKey(keys: string[]): string | null {
