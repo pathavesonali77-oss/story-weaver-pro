@@ -17,9 +17,7 @@ import { analyseBitmap } from "./blank";
 
 export type Shot = { url: string; start: number; end: number; prompt?: string | undefined };
 
-export type BuildResult =
-  | { kind: "blob"; blob: Blob }
-  | { kind: "file"; fileName: string };
+export type BuildResult = { kind: "blob"; blob: Blob } | { kind: "file"; fileName: string };
 
 const W = 1280;
 const H = 720;
@@ -65,12 +63,15 @@ type Grade = { filter: string; tint: string; tintAlpha: number };
  * night/ember/dread/gloom tints are gone. A single very light contrast touch
  * keeps the encoded frames crisp; no colour tint is applied.
  */
-const CLEAN_GRADE: Grade = { filter: "contrast(1.03) saturate(1.04)", tint: "#000000", tintAlpha: 0 };
+const CLEAN_GRADE: Grade = {
+  filter: "contrast(1.03) saturate(1.04)",
+  tint: "#000000",
+  tintAlpha: 0,
+};
 
 function gradeFor(_shot: Shot, _i: number): Grade {
   return CLEAN_GRADE;
 }
-
 
 /* ------------------------------------------------------------------ */
 /* Image loading                                                       */
@@ -129,7 +130,6 @@ function isBlankBitmap(img: ImageBitmap): boolean {
     return false;
   }
 }
-
 
 /**
  * Applies the colour grade ONCE per panel instead of once per frame.
@@ -402,7 +402,6 @@ export async function buildVideo(
     return gradeBitmap(raw, gradeFor(shots[i]!, i));
   };
 
-
   /**
    * Never let one unusable panel abort or shorten the render: fall back to a
    * neighbouring panel's image so the timeline stays intact.
@@ -426,12 +425,10 @@ export async function buildVideo(
     current = await loadGradedSafe(0);
     if (!current) throw new Error("None of the panel images could be loaded.");
 
-
     for (let i = 0; i < shots.length; i++) {
       if (encoderError) throw encoderError;
       // hard cap: never write past the script's exact runtime
       if (frameIndex >= targetFrames) break;
-
 
       const dur = durations[i]!;
       // Allocate from absolute timestamp boundaries rather than summing rounded
@@ -539,7 +536,6 @@ export async function buildVideo(
         // else: nothing loadable — hold this frame across the next panel so its
         // time still lands in the video instead of being skipped.
       }
-
     }
 
     // Length guarantee: if anything came up short of the script's runtime, hold

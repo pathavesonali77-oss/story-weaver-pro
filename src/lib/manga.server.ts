@@ -3,7 +3,6 @@ import { pixazoKeys, pickKey } from "./keys.server";
 import { textChat } from "./text-engine.server";
 import { verifyPromptForLine } from "./scene-check.server";
 
-
 const PIXAZO_URL = "https://gateway.pixazo.ai/flux-1-schnell/v1/getData";
 
 /**
@@ -62,7 +61,6 @@ export const ANATOMY_GUARD =
  * used anywhere in this app.
  */
 export { textChat };
-
 
 function stripFences(s: string): string {
   return s
@@ -393,7 +391,6 @@ export async function writePrompts(
     }
   }
 
-
   // Duplicate guard: two timestamps must never share one written prompt, or
   // one line's picture ends up standing in for another moment entirely.
   const seen = new Map<string, number>();
@@ -455,7 +452,6 @@ export async function writePrompts(
 
   return chainContinuity(built);
 }
-
 
 /**
  * Panel-to-panel continuity.
@@ -907,7 +903,6 @@ export function composeImagePrompt(prompt: string, bible?: string): string {
   return clip(parts.join(". "), IMAGE_PROMPT_BUDGET);
 }
 
-
 /**
  * Blank-panel rejection.
  *
@@ -1129,7 +1124,6 @@ export async function renderPanel(
       );
     }
   }
-
 
   // Rounds 0-1: exactly the prompt that was verified for this line.
   for (let round = 0; round < 2; round++) {

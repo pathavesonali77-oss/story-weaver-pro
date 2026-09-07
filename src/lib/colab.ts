@@ -64,7 +64,6 @@ export async function startColabRender(
   return { id, base };
 }
 
-
 export async function colabStatus(job: ColabJob): Promise<ColabStatus> {
   const res = await fetch(`${job.base}/status/${job.id}`);
   if (!res.ok) throw new Error(`Lost contact with the encoder (HTTP ${res.status}).`);
@@ -81,7 +80,6 @@ export async function renderOnColab(
 ): Promise<{ downloadUrl: string; size?: number }> {
   onProgress(1, "Sending panels to the encoder…");
   const job = await startColabRender(url, shots, targetSeconds, token);
-
 
   let misses = 0;
   for (;;) {

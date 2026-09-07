@@ -12,7 +12,6 @@ export type Segment = {
 const TS =
   /[(\[{（【]\s*(\d+):(\d{2})(?::(\d{2}))?\s*[)\]}）】]|(?:^|[\s—–-])(\d+):(\d{2})(?::(\d{2}))?(?=\s|$)/gm;
 
-
 /** Timeline frame rate. Every duration is quantised to this grid so the encoder
  * cannot drift: round(dur * FPS) is then always exact. */
 export const FPS = 30;
@@ -31,7 +30,6 @@ function toSeconds(m: RegExpExecArray): number {
   const c = third !== undefined ? Number(third) : null;
   return c === null ? a * 60 + b : a * 3600 + b * 60 + c;
 }
-
 
 /**
  * Absolute final timestamp in the raw script. This is the authoritative video
@@ -114,7 +112,12 @@ export function parseScript(raw: string): Segment[] {
   // Decide once, from the whole script, then slice accordingly.
   const firstText = raw.slice(0, marks[0]!.at).replace(/\s+/g, " ").trim();
   const trailingHits = marks.filter((mk) =>
-    /^[^\S\n]*$/.test(raw.slice(mk.at + mk.len, raw.indexOf("\n", mk.at) === -1 ? raw.length : raw.indexOf("\n", mk.at)))
+    /^[^\S\n]*$/.test(
+      raw.slice(
+        mk.at + mk.len,
+        raw.indexOf("\n", mk.at) === -1 ? raw.length : raw.indexOf("\n", mk.at),
+      ),
+    ),
   ).length;
   const trailing = firstText.length > 0 && trailingHits > marks.length / 2;
 
@@ -134,16 +137,21 @@ export function parseScript(raw: string): Segment[] {
     for (let i = 0; i < marks.length - 1; i++) {
       const a = marks[i]!;
       const b = marks[i + 1]!;
-      const text = raw.slice(a.at + a.len, b.at).replace(/\s+/g, " ").trim();
+      const text = raw
+        .slice(a.at + a.len, b.at)
+        .replace(/\s+/g, " ")
+        .trim();
       push(a.time, b.time, text);
     }
 
     // Trailing text after the last timestamp (script may end without a closing mark)
     const last = marks[marks.length - 1]!;
-    const tail = raw.slice(last.at + last.len).replace(/\s+/g, " ").trim();
+    const tail = raw
+      .slice(last.at + last.len)
+      .replace(/\s+/g, " ")
+      .trim();
     if (tail) push(last.time, last.time + estimateSpeech(tail), tail);
   }
-
 
   // NOTHING is merged: every timestamp span keeps its own segment, so the run
   // always produces exactly one image per timestamp. Spans shorter than one
@@ -221,8 +229,7 @@ export function buildTimeline(shots: PanelSource[], targetSeconds?: number): Tim
 
   // 1. contiguous boundaries from the timestamps themselves
   const bounds: number[] = [];
-  for (let i = 0; i < all.length; i++)
-    bounds.push(i === 0 ? t0 : Math.min(tEnd, all[i]!.start));
+  for (let i = 0; i < all.length; i++) bounds.push(i === 0 ? t0 : Math.min(tEnd, all[i]!.start));
   bounds.push(tEnd);
 
   // 2. resolve every panel's image: its own, else the nearest neighbour's

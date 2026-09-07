@@ -27,7 +27,7 @@ const SYSTEM =
   "3. ACTION: the exact action and moment drawn is the action this line states, not a different beat of the story.\n" +
   "4. NO BLENDING: the prompt shows one single moment, not two timestamps merged.\n" +
   "Be strict: sharing a word or a character name is NOT a match — the depicted moment must be this line's moment.\n" +
-  'ANSWER FORMAT: if all four checks pass, reply with exactly: MATCH\n' +
+  "ANSWER FORMAT: if all four checks pass, reply with exactly: MATCH\n" +
   "Otherwise reply with ONLY a replacement image prompt (one single paragraph, 55-80 English words, no preamble, " +
   "no quotes, no explanation, no numbering) that draws EXACTLY this line's own moment: its place, its people with " +
   "their character-sheet traits woven inline, its action, 4-6 concrete environment details, a camera angle and the " +

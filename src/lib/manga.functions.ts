@@ -16,9 +16,7 @@ export const analyzeScript = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const segments = parseScript(data.script);
     if (segments.length === 0) {
-      throw new Error(
-        "No timestamps found. Each line needs a time like 0:00, (0:00) or [0:00].",
-      );
+      throw new Error("No timestamps found. Each line needs a time like 0:00, (0:00) or [0:00].");
     }
     const bible = await buildCharacterBible(data.script);
     return { segments, bible, engine: engineStatus() };
@@ -74,7 +72,6 @@ export const renderImage = createServerFn({ method: "POST" })
     return { url, prompt, rewritten };
   });
 
-
 /**
  * Renders several panels in one round trip. Failures are reported per item so
  * one bad panel never fails the group.
@@ -116,7 +113,6 @@ export const renderBatch = createServerFn({ method: "POST" })
             job.timestamp,
           );
           return { index: job.index, url, prompt, rewritten };
-
         } catch (e) {
           return {
             index: job.index,

@@ -1,19 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  analyzeScript,
-  promptsForRange,
-  renderImage,
-  renderBatch,
-} from "@/lib/manga.functions";
+import { analyzeScript, promptsForRange, renderImage, renderBatch } from "@/lib/manga.functions";
 
 import { buildTimeline, fmt, scriptEndTime, type Segment } from "@/lib/script";
 import { buildVideo, webCodecsSupported } from "@/lib/video";
 import { isBlankImageUrl } from "@/lib/blank";
 import { loadRun, saveRun } from "@/lib/progress";
 import { colabHealth, normalizeColabUrl, renderOnColab } from "@/lib/colab";
-
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -63,9 +57,6 @@ const SAMPLE = `(0:00)Henan की कहानी असुरा का उद
  * which is what protects the daily free-model allowance.
  */
 const PROMPT_RANGE = 300;
-
-
-
 
 /**
  * Parallel image request lanes. Each lane sends IMAGE_BATCH prompts in one
@@ -142,7 +133,6 @@ function Index() {
   const cancelRef = useRef(false);
   const [retrying, setRetrying] = useState<number[]>([]);
 
-
   shotsRef.current = shots;
 
   // restore the Colab encoder link across refreshes
@@ -167,7 +157,6 @@ function Index() {
   // Runtime is the script's own span (first to last timestamp) — the exact
   // length the exported video is forced to match.
   const runtime = useMemo(() => scriptEndTime(script), [script]);
-
 
   // offer to resume whatever this exact script produced last time
   useEffect(() => {
@@ -357,13 +346,9 @@ function Index() {
             tick();
           }
         }
-
       })().then(() => {
         promptingDone = true;
       });
-
-
-
 
       // Adaptive throttle: back off globally when the provider rate-limits.
       let cooldownUntil = 0;
@@ -455,7 +440,6 @@ function Index() {
                 }
               }),
             );
-
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             group.forEach((g) => requeue(g, msg));
@@ -475,7 +459,11 @@ function Index() {
       await saveProgress(key, { bible: b, shots: list });
       setPhase("done");
       const bad = list.filter((s) => !s.url).length;
-      setNote(bad ? `${list.length - bad}/${list.length} panels ready · ${bad} failed` : "All panels generated.");
+      setNote(
+        bad
+          ? `${list.length - bad}/${list.length} panels ready · ${bad} failed`
+          : "All panels generated.",
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setPhase("error");
@@ -573,7 +561,6 @@ function Index() {
       const prompt = prompts[0] as string | undefined;
       if (!prompt) throw new Error("no prompt");
 
-
       record(index, { prompt, status: "drawing" });
       const { url } = await draw({
         data: {
@@ -598,7 +585,6 @@ function Index() {
     }
   }
 
-
   /* ---------------------------------------------------------------- */
   /* Video                                                             */
   /* ---------------------------------------------------------------- */
@@ -613,7 +599,6 @@ function Index() {
           ? `Connected · GPU (NVENC) encoder ready · ${h.lanes} lanes`
           : `Connected · CPU encoder (libx264) ready · ${h.lanes} parallel lanes`,
       );
-
     } catch (e) {
       setError(
         `Could not reach that encoder. Make sure encoder_server.py is still running and the tunnel is up. (${
@@ -729,7 +714,9 @@ function Index() {
       }
       if (cancelled) {
         if (long) {
-          setError("A video this long must be saved to a file. Pick a save location and try again.");
+          setError(
+            "A video this long must be saved to a file. Pick a save location and try again.",
+          );
           return;
         }
         // Short video, user dismissed the dialog: fall through and keep it in memory.
@@ -740,7 +727,6 @@ function Index() {
         return;
       }
     }
-
 
     setPhase("video");
     setVideoPct(0);
@@ -913,7 +899,9 @@ function Index() {
         )}
 
         <section className="mt-8 border-4 border-foreground bg-card p-5">
-          <h2 className="font-display text-2xl font-black uppercase">Remote encoder (CPU or GPU)</h2>
+          <h2 className="font-display text-2xl font-black uppercase">
+            Remote encoder (CPU or GPU)
+          </h2>
           <p className="mt-2 text-sm text-muted-foreground">
             Encode the final video on any remote machine — a plain <strong>CPU</strong> cloud box or
             a GPU runtime. Nothing is rendered locally, so multi-hour exports never hit your
@@ -983,7 +971,6 @@ function Index() {
           {colabInfo && <p className="mt-3 font-mono text-xs uppercase">{colabInfo}</p>}
         </section>
 
-
         {error && (
           <p className="mt-4 border-2 border-destructive bg-destructive/10 p-3 text-sm">{error}</p>
         )}
@@ -1003,14 +990,16 @@ function Index() {
               download="manga-video.mp4"
               className="mt-3 inline-block border-4 border-foreground bg-primary px-5 py-2 font-display font-black uppercase text-primary-foreground"
             >
-            Download mp4
+              Download mp4
             </a>
           </section>
         )}
 
         {downloadUrl && (
           <section className="mt-8 border-4 border-foreground bg-card p-5">
-            <h2 className="font-display text-2xl font-black uppercase">Your video (remote encoder)</h2>
+            <h2 className="font-display text-2xl font-black uppercase">
+              Your video (remote encoder)
+            </h2>
             <p className="mt-2 text-sm text-muted-foreground">
               Encoded on your remote server. Download it while the server and tunnel are still
               running — the link dies with the session.
