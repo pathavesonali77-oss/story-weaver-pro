@@ -298,23 +298,48 @@ export async function writePrompts(
 ): Promise<string[]> {
   const count = to - from + 1;
   if (count <= 0) return [];
-  const script = numberScript(all);
+
+  /**
+   * Lines asked for in ONE request.
+   *
+   * Long scripts used to be handled by pasting the WHOLE script and asking for
+   * hundreds of prompts in a single reply. The model then renumbered, skipped
+   * or truncated its answer, and prompts silently landed on the wrong
+   * timestamps — panels drawn from a completely different part of the story.
+   * Small, explicit requests remove that failure entirely: every request now
+   * prints the exact lines to draw, so the model cannot drift off them.
+   */
+  const SUB = 20;
+  /** Neighbouring lines sent for continuity only — never drawn. */
+  const CONTEXT_BEFORE = 8;
+  const CONTEXT_AFTER = 6;
+
+  const lineOf = (n: number): string => {
+    const s = all[n - 1] as Segment;
+    return `${n}. [${s.start}s-${s.end}s] ${s.text}`;
+  };
 
   const ask = async (want: number[], temp: number) => {
-    const list = want.join(", ");
+    const first = want[0] as number;
+    const last = want[want.length - 1] as number;
+    const lo = Math.max(1, first - CONTEXT_BEFORE);
+    const hi = Math.min(all.length, last + CONTEXT_AFTER);
+    const context: string[] = [];
+    for (let i = lo; i <= hi; i++) context.push(lineOf(i));
+    const draw = want.map(lineOf).join("\n");
+
     return textChat(
       PROMPT_SYSTEM,
       `CHARACTER BIBLE:\n${bible || "(none)"}\n\n` +
-        `FULL SCRIPT (every line is numbered; read all of it for continuity):\n${script}\n\n` +
-        `NOW WRITE PROMPTS ONLY FOR THESE LINE NUMBERS: ${list}.\n` +
-        `Output exactly ${want.length} lines, each starting with the script line's own number, ` +
-        `then ') ', then the prompt. Nothing else.`,
+        `STORY CONTEXT (surrounding script lines, for continuity only — never write a prompt for these):\n` +
+        `${context.join("\n")}\n\n` +
+        `LINES TO DRAW — write ONE prompt for EACH of these ${want.length} lines and nothing else. ` +
+        `Each prompt draws ONLY its own line's moment, place and action:\n${draw}\n\n` +
+        `Output exactly ${want.length} lines, each starting with that line's own number ` +
+        `(${want.join(", ")}), then ') ', then the prompt on the same single line. Nothing else.`,
       {
         temperature: temp,
-        // ~200 tokens of prompt per line, plus head-room.
-        // MiniMax M3 has a far larger output ceiling than the old engine, so a
-        // whole pass of prompts fits in a single reply.
-        maxOutputTokens: Math.min(250_000, 4_000 + want.length * 340),
+        maxOutputTokens: Math.min(120_000, 3_000 + want.length * 340),
       },
     );
   };
@@ -333,54 +358,54 @@ export async function writePrompts(
     });
     if (entries.length === 0) return;
 
-    // The model sometimes renumbers its answer 1..N (or returns unnumbered /
-    // JSON lines, which the parser keys 1..N as well). Those numbers point at
-    // the START of the script, not at the lines we asked for — accepting them
-    // as-is is what produced panels drawn from a completely different part of
-    // the story. If nothing overlaps the requested numbers, or the numbers are
-    // exactly 1..N for a request that does not start at 1, map them back onto
-    // the requested lines in order.
-    const wantSet = new Set(want);
-    const overlap = entries.filter((e) => wantSet.has(e.n)).length;
-    const looksRelative =
-      overlap === 0 ||
-      (want[0] !== 1 && entries.length === want.length && entries.every((e, i) => e.n === i + 1));
     // Timestamp fidelity gate: accept a prompt only when it shares a content
     // word with its OWN script line (checked for English lines; Hindi lines
-    // cannot be word-matched, so they pass through). A prompt written from a
-    // different timestamp is rejected here so the repair passes re-ask for
-    // that specific line instead of drawing the wrong scene.
+    // cannot be word-matched, so they are checked later, per line, by the
+    // scene checker just before rendering).
     const accept = (n: number, text: string) => {
       const seg = all[n - 1];
       if (seg && isEnglishish(seg.text) && !mentionsLine(text, seg.text)) return;
       byNumber.set(n, text);
     };
-    if (looksRelative) {
-      if (entries.length !== want.length) {
-        console.error(
-          `writePrompts: answer numbering does not match request (${entries.length} prompts for ${want.length} lines) — discarded`,
-        );
-        return;
-      }
-      entries.forEach((e, i) => accept(want[i] as number, e.text));
+
+    const wantSet = new Set(want);
+    const matched = entries.filter((e) => wantSet.has(e.n));
+    if (matched.length > 0) {
+      // Numbers that belong to this request: trust them.
+      for (const e of matched) accept(e.n, e.text);
       return;
     }
-    for (const e of entries) if (wantSet.has(e.n)) accept(e.n, e.text);
+
+    // No requested number came back. The model renumbered its answer (1..N).
+    // Positional mapping is only safe when the count matches EXACTLY — anything
+    // else is guesswork and would put a prompt on the wrong timestamp.
+    if (entries.length !== want.length) {
+      console.error(
+        `writePrompts: answer numbering does not match request (${entries.length} prompts for ${want.length} lines) — discarded`,
+      );
+      return;
+    }
+    entries.forEach((e, i) => accept(want[i] as number, e.text));
   };
 
-  try {
-    absorb(await ask(wanted, 0.7), wanted);
-  } catch (e) {
-    console.error("writePrompts pass failed:", e instanceof Error ? e.message : e);
-  }
-
-  // Repair pass: one timestamp must always get its own prompt.
-  const missing = wanted.filter((n) => !byNumber.has(n));
-  if (missing.length > 0) {
+  // Small sequential sub-batches, so one bad reply can only affect its own
+  // handful of lines instead of hundreds.
+  for (let i = 0; i < wanted.length; i += SUB) {
+    const group = wanted.slice(i, i + SUB);
     try {
-      absorb(await ask(missing, 0.5), missing);
+      absorb(await ask(group, 0.7), group);
     } catch (e) {
-      console.error("writePrompts repair failed:", e instanceof Error ? e.message : e);
+      console.error("writePrompts pass failed:", e instanceof Error ? e.message : e);
+    }
+
+    // Repair pass for whatever this group is still missing.
+    const gap = group.filter((n) => !byNumber.has(n));
+    if (gap.length > 0 && gap.length < group.length) {
+      try {
+        absorb(await ask(gap, 0.5), gap);
+      } catch (e) {
+        console.error("writePrompts repair failed:", e instanceof Error ? e.message : e);
+      }
     }
   }
 
@@ -395,6 +420,7 @@ export async function writePrompts(
       );
     }
   }
+
 
   // Duplicate guard: two timestamps must never share one written prompt, or
   // one line's picture ends up standing in for another moment entirely.
