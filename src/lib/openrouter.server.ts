@@ -26,7 +26,7 @@ export const MODEL = "minimax/minimax-m3:free";
  */
 const MIN_GAP_MS = 3_500;
 
-type Slot = { exhaustedUntil: number; lastUsed: number };
+type Slot = { exhaustedUntil: number; lastUsed: number; shortHits: number };
 
 const slots = new Map<string, Slot>();
 /** Index of the key currently in use. */
